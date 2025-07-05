@@ -19,9 +19,9 @@ class DropMergeEnv(gym.Env):
         SUCCESS = 2
         
 
-    def __init__(self, seed: int = 42) -> None:
-        self.num_rows = 7
-        self.num_cols = 5
+    def __init__(self, num_rows = 7, num_cols = 5, seed: int = 42) -> None:
+        self.num_rows = num_rows
+        self.num_cols = num_cols
 
         self.random = random.Random(seed)
 
@@ -320,8 +320,9 @@ class DropMergeEnv(gym.Env):
         #     + 0.5 * num_free_tiles \
         #     + (heuristic_penalty_after - heuristic_penalty_before)
         # total_reward = 1.0 + (heuristic_score_after - heuristic_score_before) / 128
-        num_full_rows = np.count_nonzero(np.all(self.board > 0, axis=1))
-        total_reward = (1.0 - (num_full_rows / (self.num_rows + 1))) / 128
+        # num_full_rows = np.count_nonzero(np.all(self.board > 0, axis=1))
+        # total_reward = (1.0 - (num_full_rows / (self.num_rows + 1))) / 128
+        total_reward = 1.0 / 128
 
         if result == self.StepResult.SUCCESS:
             return self._observation(), total_reward, False, False, {"delta_captures": delta_captures}

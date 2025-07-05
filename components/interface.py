@@ -6,104 +6,21 @@ import pygame
 from components.tile import tile_width_px, background_color, draw_tile
 from components.grid import tile_padding_width_px, draw_grid
 from components.simulator import DropMergeEnv
+from components.strategy import CustomValueFunction, PPOValueFunction, RandomAgent, ValueOptimizerAgent, PPOAgent
 
 import torch
 from stable_baselines3 import PPO
 
-
-class Strategy(Enum):
-    HUMAN = "human"
-    RANDOM = "random"
-    CLEVER = "clever"
-    PPO = "ppo"
-    PPO_LOOKAHEAD = "ppo_lookahead"
-
-# ppo_path = "models/ppo_dropmerge.zip"
-ppo_path = "model_checkpoints/rl_model_998400000_steps.zip"
-
-def best_action_with_lookahead(model, env, depth: int = 1, gamma: float = 0.995):
-    """
-    Return the column index chosen by depth-`depth` stochastic expectimax.
-    `model` must be a trained SB3 PPO object.
-    """
-
-    # ------------------------------------------------------------------ #
-    # Recursive expectimax: chance nodes are the random next-tile spawn. #
-    # ------------------------------------------------------------------ #
-    def expectimax(env_state: DropMergeEnv, d: int) -> float:
-        # leaf node: use value network
-        if d == 0:
-            obs_dict = env_state._observation()
-            obs_tensor, _ = model.policy.obs_to_tensor(obs_dict)
-            with torch.no_grad():
-                return float(model.policy.predict_values(obs_tensor))
-
-        # maximise over legal actions
-        best_q = -float("inf")
-        for a in env_state._legal_actions():
-            env_after_action = copy.deepcopy(env_state)
-            obs, r, term, trunc, _ = env_after_action.step(a)
-
-            # terminal state -> no further look-ahead
-            if term or trunc:
-                exp_val = 0.0
-            else:
-                # ---------------- Chance node ----------------
-                child_states = []
-                for tile in DropMergeEnv.SPAWNABLE_VALUES:
-                    env_child = copy.deepcopy(env_after_action)
-                    env_child.current_tile = tile
-                    child_states.append(env_child)
-
-                # batch-evaluate all six children
-                obs_batch      = [s._observation() for s in child_states]
-                obs_tensor  = [model.policy.obs_to_tensor(x)[0] for x in obs_batch]
-                with torch.no_grad():
-                    v_batch = [float(model.policy.predict_values(x)) for x in obs_tensor]
-
-                exp_val = float(np.mean(v_batch))  # uniform spawn distribution
-
-            q = r + gamma * exp_val
-            best_q = max(best_q, q)
-
-        return best_q
-
-    # ---------------- Root search ----------------
-    legal_actions = env._legal_actions()
-    q_values = []
-    for a in legal_actions:
-        env_root_child = copy.deepcopy(env)
-        _, r, term, trunc, _ = env_root_child.step(a)
-
-        if term or trunc:
-            exp_val = 0.0
-        else:
-            exp_val = 0.0
-            for tile in DropMergeEnv.SPAWNABLE_VALUES:
-                env_child = copy.deepcopy(env_root_child)
-                env_child.current_tile = tile
-                exp_val += (1.0 / len(DropMergeEnv.SPAWNABLE_VALUES)) * expectimax(
-                    env_child, depth - 1
-                )
-
-        q_values.append(r + gamma * exp_val)
-
-    # Choose arg-max action
-    best_idx = int(np.argmax(q_values))
-    return legal_actions[best_idx]
-
 if __name__ == "__main__":
-    num_rows = 7
+    num_rows = 4
     num_cols = 5
 
-    play_strategy = Strategy.PPO_LOOKAHEAD
-    if play_strategy == Strategy.PPO or play_strategy == Strategy.PPO_LOOKAHEAD:
-        assert ppo_path is not None, "PPO path must be provided for PPO strategy."
-        if torch.cuda.is_available():
-            model = PPO.load(ppo_path, device='cuda')
-        else:
-            model = PPO.load(ppo_path, device='cpu')
-            print("WARNING: Running PPO strategy on CPU, GPU not detected.")
+    agent = PPOAgent("preav5_4x5.zip")
+    # agent = RandomAgent()
+    # agent = ValueOptimizerAgent(PPOValueFunction("preav3.zip"), depth=1)
+    # agent = ValueOptimizerAgent(CustomValueFunction(), depth=1)
+    # agent = None
+    fast_replay = True
 
     grid_total_width = num_cols * tile_width_px + (num_cols + 1) * tile_padding_width_px
     grid_total_height = num_rows * tile_width_px + (num_rows + 1) * tile_padding_width_px
@@ -114,7 +31,7 @@ if __name__ == "__main__":
     window_total_height = grid_total_height + top_ui_height
 
     pygame.init()
-    env = DropMergeEnv(seed=42)
+    env = DropMergeEnv(num_rows=num_rows, num_cols=num_cols, seed=42)
     obs, _ = env.reset()
     delta_captures = []
 
@@ -138,7 +55,7 @@ if __name__ == "__main__":
                 pygame.quit()
                 exit()
             
-            if not display_queue and play_strategy == Strategy.HUMAN:
+            if not display_queue and agent is None:
                 # If display queue is non-empty, ignore user input and continue playing the animation
 
                 # Handle key presses for actions
@@ -167,24 +84,8 @@ if __name__ == "__main__":
             selected_col = None
             continue
 
-        if not display_queue and play_strategy != Strategy.HUMAN:
-            if play_strategy == Strategy.RANDOM:
-                # Randomly select a column to drop the tile
-                selected_col = env.random_action()
-            elif play_strategy == Strategy.CLEVER:
-                legal_actions = env._legal_actions()
-                board_after_each_action = [env._apply_step_no_mutate(col, env.board, env.current_tile)[0] for col in legal_actions]
-                heuristic_scores = [env._heuristic_score(board) for board in board_after_each_action]
-                best_action = legal_actions[heuristic_scores.index(max(heuristic_scores))]
-                selected_col = best_action
-            elif play_strategy == Strategy.PPO:
-                action, _ = model.predict(obs, deterministic=True)
-                selected_col = int(action.item() if isinstance(action, torch.Tensor) else action)
-                legal_actions = env._legal_actions()
-                if selected_col not in legal_actions:
-                    selected_col = env.random.choice(legal_actions)
-            elif play_strategy == Strategy.PPO_LOOKAHEAD:
-                selected_col = best_action_with_lookahead(model, env, depth=2)
+        if not display_queue and agent is not None:
+            selected_col = agent.get_action(env)
             result, delta_captures = env._step(selected_col)
             display_queue.extend(delta_captures)
             if result == DropMergeEnv.StepResult.SUCCESS:
@@ -214,13 +115,17 @@ if __name__ == "__main__":
             pygame.display.flip()
             # add a delay to see the animation
             # skipping the last animation as it should be the final state
-            if display_queue and play_strategy == Strategy.HUMAN:
+            if display_queue and not fast_replay:
                 pygame.time.delay(250)
             elif display_queue:
-                # pygame.time.delay(10)
-                pass
+                pygame.time.delay(10)
         else:
             draw_grid(screen, (0, top_ui_height), env.board, selected_col, env.current_tile, merge_indicators)
             pygame.display.flip()
-        # clock.tick(10)
+        if fast_replay or agent is None:
+            clock.tick(60)
+        elif not display_queue:
+            clock.tick(1)
+        else:
+            clock.tick(10)
 
