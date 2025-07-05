@@ -224,6 +224,40 @@ std::tuple<bool, py::array_t<int>> step_immutable(py::array_t<int> arr, int targ
     return {result, new_board};
 }
 
+float value_function(py::array_t<int> arr) {
+    int num_rows = arr.shape(0);
+    int num_cols = arr.shape(1);
+    auto buf = arr.unchecked<2>();
+    float score = 0.0f;
+
+    for (int r = 0; r < num_rows; ++r) {
+        for (int c = 0; c < num_cols; ++c) {
+            int tile_value = buf(r, c);
+            if (tile_value > 0) {
+                // Penalize for each tile on the board
+                score -= 1;
+
+                // Add bonus for tiles that are above their successor in the merge chain
+                if (r < num_rows - 1 && buf(r + 1, c) == tile_value * 2) {
+                    score += 0.75f; // Bonus for being above a double tile
+                }
+            }
+        }
+    }
+
+    // Punish non-decreasing columns
+    for (int c = 0; c < num_cols; ++c) {
+        for (int r = num_rows - 1; r > 0; --r) {
+            if (buf(r, c) > 0 && buf(r, c) < buf(r - 1, c)) {
+                score -= 10; // Penalty for non-decreasing column
+                // break; // Only need to penalize once per column
+            }
+        }
+    }
+
+    return score;
+}
+
 // Mutate in-place: add 1 to every element
 void increment_inplace(py::array_t<int> arr) {
     auto buf = arr.mutable_unchecked<2>();
@@ -316,4 +350,5 @@ PYBIND11_MODULE(cpp_core, m) {
     m.def("step_inplace", &step_inplace, "Perform a step in-place on the board");
     m.def("step_immutable", &step_immutable, "Perform a step on the board and return a new board");
     m.def("resolve_board_inplace", &resolve_board_inplace, "Resolve the board in-place based on the game rules");
+    m.def("value_function", &value_function, "Calculate the value function for the board");
 }

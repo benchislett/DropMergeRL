@@ -12,6 +12,8 @@ from components.simulator import DropMergeEnv
 import torch
 from stable_baselines3 import PPO
 
+import cpp_core
+
 class ValueFunction(ABC):
     def get_value(self, board: np.ndarray, current_tile: int | None, next_tile: int | None) -> float:
         """
@@ -243,41 +245,7 @@ class PPOValueFunction(ValueFunction):
     
 class CustomValueFunction(ValueFunction):
     def get_value(self, board: np.ndarray, _current_tile: int | None, _next_tile: int | None) -> float:
-        """
-        Custom value function that performs analysis based on the board state.
-        Components:
-        - Accumulate the sum of all tile values on the board. This is the "base score", encouraging multi-way merges.
-        - Look for "trapped" tiles that are surrounded by higher tiles, and are "stuck". These should be penalized heavily.
-        - Apply bonuses based on tiles that are above their successor in the merge chain, such as a "32" above a "64".
-        """
-        # base_score = np.sum(board)
-        base_score = 0
-
-        # Subtract 1 for each nonzero tile to encourage more merges
-        base_score -= np.count_nonzero(board)
-
-        # Punish non-decreasing columns
-        for col in range(board.shape[1]):
-            for row in range(board.shape[0] - 1, 0, -1):
-                if board[row, col] > 0 and board[row, col] < board[row - 1, col]:
-                    base_score -= 100
-                    break
-
-        top_row_last_values = []
-        for col in range(board.shape[1]):
-            for row in range(board.shape[0]):
-                if board[row, col] > 0:
-                    top_row_last_values.append(board[row, col])
-                    break
-            else:
-                top_row_last_values.append(0)
-        
-        top_row_last_values_no_zeros = [v for v in top_row_last_values if v > 0]
-        delta = len(top_row_last_values_no_zeros) - len(set(top_row_last_values_no_zeros))
-        if delta > 0:
-            base_score -= delta
-
-        return base_score
+        return cpp_core.value_function(board)
 
     def is_board_only(self) -> bool:
         return True
