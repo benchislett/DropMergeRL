@@ -15,12 +15,12 @@ if __name__ == "__main__":
     num_rows = 4
     num_cols = 5
 
-    agent = PPOAgent("preav5_4x5.zip")
+    # agent = PPOAgent("preav5_4x5.zip")
     # agent = RandomAgent()
     # agent = ValueOptimizerAgent(PPOValueFunction("preav3.zip"), depth=1)
     # agent = ValueOptimizerAgent(CustomValueFunction(), depth=1)
-    # agent = None
-    fast_replay = True
+    agent = None
+    fast_replay = False
 
     grid_total_width = num_cols * tile_width_px + (num_cols + 1) * tile_padding_width_px
     grid_total_height = num_rows * tile_width_px + (num_rows + 1) * tile_padding_width_px
