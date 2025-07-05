@@ -250,38 +250,32 @@ class CustomValueFunction(ValueFunction):
         - Look for "trapped" tiles that are surrounded by higher tiles, and are "stuck". These should be penalized heavily.
         - Apply bonuses based on tiles that are above their successor in the merge chain, such as a "32" above a "64".
         """
-        base_score = np.sum(board)
+        # base_score = np.sum(board)
+        base_score = 0
 
         # Subtract 1 for each nonzero tile to encourage more merges
         base_score -= np.count_nonzero(board)
 
-        for row in range(board.shape[0]):
-            for col in range(board.shape[1]):
-                tile_value = board[row, col]
-                if tile_value == 0:
-                    continue
+        # Punish non-decreasing columns
+        for col in range(board.shape[1]):
+            for row in range(board.shape[0] - 1, 0, -1):
+                if board[row, col] > 0 and board[row, col] < board[row - 1, col]:
+                    base_score -= 100
+                    break
 
-                # Check for trapped tiles
-                trapped = True
-                for dr in [-1, 0, 1]:
-                    for dc in [-1, 0, 1]:
-                        if (dr == 0 and dc == 0) or not (0 <= row + dr < board.shape[0] and 0 <= col + dc < board.shape[1]):
-                            continue
-                        neighbor_value = board[row + dr, col + dc]
-                        if neighbor_value <= tile_value:
-                            trapped = False
-                            break
-                    if not trapped:
-                        break
-                if trapped and row != 0:
-                    base_score -= (DropMergeEnv.MAX_VALID_VALUE / tile_value) * 2
-                
-                if row < board.shape[0] - 1:
-                    tile_below = board[row + 1, col]
-                    if tile_below == tile_value * 2:
-                        base_score += tile_value / 2.0
-                    elif tile_below < tile_value:
-                        base_score -= (DropMergeEnv.MAX_VALID_VALUE / tile_value) * 2
+        top_row_last_values = []
+        for col in range(board.shape[1]):
+            for row in range(board.shape[0]):
+                if board[row, col] > 0:
+                    top_row_last_values.append(board[row, col])
+                    break
+            else:
+                top_row_last_values.append(0)
+        
+        top_row_last_values_no_zeros = [v for v in top_row_last_values if v > 0]
+        delta = len(top_row_last_values_no_zeros) - len(set(top_row_last_values_no_zeros))
+        if delta > 0:
+            base_score -= delta
 
         return base_score
 
@@ -295,8 +289,8 @@ if __name__ == "__main__":
 
     # agent = PPOAgent("preav4.zip")
     # agent = RandomAgent()
-    agent = ValueOptimizerAgent(PPOValueFunction("preav4.zip", num_rows=num_rows, num_cols=num_cols), depth=3, num_rows=num_rows, num_cols=num_cols)
-    # agent = ValueOptimizerAgent(CustomValueFunction(), depth=2, num_rows=num_rows, num_cols=num_cols)
+    # agent = ValueOptimizerAgent(PPOValueFunction("preav4.zip", num_rows=num_rows, num_cols=num_cols), depth=3, num_rows=num_rows, num_cols=num_cols)
+    agent = ValueOptimizerAgent(CustomValueFunction(), depth=2, num_rows=num_rows, num_cols=num_cols)
 
     num_sims = 100
     stats_per_run = []
