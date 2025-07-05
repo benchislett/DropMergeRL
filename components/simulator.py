@@ -7,6 +7,8 @@ import gymnasium as gym
 import numpy as np
 from gymnasium import spaces
 
+import cpp_core
+
 class DropMergeEnv(gym.Env):
 
     SPAWNABLE_VALUES = (2, 4, 8, 16, 32, 64)
@@ -260,7 +262,7 @@ class DropMergeEnv(gym.Env):
         delta_captures = []
         # delta_captures.append((self.board.copy(), []))
 
-        new_board = board.copy()
+        new_board = board.astype(np.int32).copy()
 
         # First, try to drop the current tile into the selected column
         # Case: If the column is full but the top cell matches the current tile, we can merge
@@ -280,14 +282,17 @@ class DropMergeEnv(gym.Env):
                     break
 
         # Handle merges
-        new_board, new_delta_captures = self._resolve_board(new_board, selected_col)
-        delta_captures.extend(new_delta_captures)
+        # new_board, new_delta_captures = self._resolve_board(new_board, selected_col)
+
+        cpp_core.resolve_board_inplace(new_board, selected_col, self.MAX_VALID_VALUE)
+
+        # delta_captures.extend(new_delta_captures)
 
         return new_board, self.StepResult.SUCCESS, delta_captures
     
     def _step(self, action: int):
         new_board, result, delta_captures = self._apply_step_no_mutate(action, self.board, self.current_tile)
-        self.board = new_board
+        self.board = new_board.copy()
         self.current_tile = self.next_tile
         self.next_tile = self._random_tile()
         return result, delta_captures
