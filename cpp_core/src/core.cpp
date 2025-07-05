@@ -6,6 +6,33 @@
 
 namespace py = pybind11;
 
+py::array_t<int> create_empty_board(int rows, int cols) {
+    auto result = py::array_t<int>({rows, cols});
+    auto buf = result.mutable_unchecked<2>();
+
+    for (int i = 0; i < rows; ++i) {
+        for (int j = 0; j < cols; ++j) {
+            buf(i, j) = 0;
+        }
+    }
+
+    return result;
+}
+
+py::array_t<int> copy_board(py::array_t<int> arr) {
+    auto buf = arr.unchecked<2>();
+    auto result = py::array_t<int>({buf.shape(0), buf.shape(1)});
+    auto out = result.mutable_unchecked<2>();
+
+    for (ssize_t i = 0; i < buf.shape(0); ++i) {
+        for (ssize_t j = 0; j < buf.shape(1); ++j) {
+            out(i, j) = buf(i, j);
+        }
+    }
+
+    return result;
+}
+
 void apply_gravity_to_cols(py::array_t<int> arr, int row_last, int col_left, int col_right) {
     auto buf = arr.mutable_unchecked<2>();
     int num_rows = buf.shape(0);
@@ -160,20 +187,41 @@ void resolve_board_inplace(py::array_t<int> arr, int target_col, int max_value) 
     }
 }
 
-py::array_t<int> create_grid() {
-    constexpr int rows = 7;
-    constexpr int cols = 5;
+bool step_inplace(py::array_t<int> arr, int target_col, int current_tile, int max_value) {
+    int num_rows = arr.shape(0);
+    int num_cols = arr.shape(1);
+    auto buf = arr.mutable_unchecked<2>();
 
-    auto result = py::array_t<int>({rows, cols});
-    auto buf = result.mutable_unchecked<2>();
-
-    for (int i = 0; i < rows; ++i) {
-        for (int j = 0; j < cols; ++j) {
-            buf(i, j) = 0;
+    // Try to add the tile from the top, in the target column
+    if (buf(0, target_col) != 0) {
+        // If the target column is already occupied:
+        if (buf(0, target_col) == current_tile && buf(0, target_col) * 2 <= max_value) {
+            // If the tile matches, we can merge
+            buf(0, target_col) *= 2; // Merge the tile
+        } else {
+            return false; // Invalid move, cannot place here
+        }
+    } else {
+        // If the target column is empty, place it at the first available row
+        for (int r = num_rows - 1; r >= 0; --r) {
+            if (buf(r, target_col) == 0) {
+                buf(r, target_col) = current_tile; // Place the tile
+                break;
+            }
         }
     }
 
-    return result;
+    // Resolve the board in-place based on the game rules
+    resolve_board_inplace(arr, target_col, max_value);
+
+    return true; // Move was successful
+}
+
+std::tuple<bool, py::array_t<int>> step_immutable(py::array_t<int> arr, int target_col, int current_tile, int max_value) {
+    // Create a copy of the board
+    auto new_board = copy_board(arr);
+    bool result = step_inplace(new_board, target_col, current_tile, max_value);
+    return {result, new_board};
 }
 
 // Mutate in-place: add 1 to every element
@@ -246,7 +294,8 @@ class OwnedGrid {
 
 PYBIND11_MODULE(cpp_core, m) {
     m.doc() = "C++ core for DropMergeRL";
-    m.def("create_grid", &create_grid, "Create a 7x5 grid filled with zeros");
+
+    // EXAMPLE METHODS FOR REFERENCE
     m.def("increment_inplace", &increment_inplace, "Increment all elements in-place");
     m.def("double_array", &double_array, "Return a new array with all elements doubled");
     m.def("sum_array", &sum_array, "Return the sum of all elements");
@@ -260,5 +309,11 @@ PYBIND11_MODULE(cpp_core, m) {
         .def("get", &OwnedGrid::get)
         .def("as_numpy", &OwnedGrid::as_numpy)
         .def("as_numpy_mut", &OwnedGrid::as_numpy_mut);
+
+    // GAME LOGIC METHODS
+    m.def("create_empty_board", &create_empty_board, "Create an empty board with specified rows and columns");
+    m.def("copy_board", &copy_board, "Create a copy of the board");
+    m.def("step_inplace", &step_inplace, "Perform a step in-place on the board");
+    m.def("step_immutable", &step_immutable, "Perform a step on the board and return a new board");
     m.def("resolve_board_inplace", &resolve_board_inplace, "Resolve the board in-place based on the game rules");
 }

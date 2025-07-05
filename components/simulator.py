@@ -257,38 +257,19 @@ class DropMergeEnv(gym.Env):
         """Performs a step without mutating the environment state."""
         if not 0 <= action < self.num_cols:
             return board, self.StepResult.FAIL_INVALID, []
+        
         selected_col = action
 
         delta_captures = []
         # delta_captures.append((self.board.copy(), []))
 
         new_board = board.astype(np.int32).copy()
-
-        # First, try to drop the current tile into the selected column
-        # Case: If the column is full but the top cell matches the current tile, we can merge
-        if new_board[0, selected_col] != 0 and (new_board[0, selected_col] != current_tile or new_board[0, selected_col] >= self.MAX_VALID_VALUE):
-            # Game over
-            return board, self.StepResult.FAIL_FULL, delta_captures
-        elif new_board[0, selected_col] != 0:
-            # Merge the current tile with the top cell
-            new_board[0, selected_col] = min(new_board[0, selected_col] * 2, self.MAX_VALID_VALUE)
-            delta_captures.append((new_board.copy(), []))
+        success = cpp_core.step_inplace(new_board, selected_col, current_tile, self.MAX_VALID_VALUE)
+        if not success:
+            return new_board, self.StepResult.FAIL_FULL, []
         else:
-            # Drop the current tile to the lowest available position in the column
-            for r in range(self.num_rows - 1, -1, -1):
-                if new_board[r, selected_col] == 0:
-                    new_board[r, selected_col] = current_tile
-                    delta_captures.append((new_board.copy(), []))
-                    break
-
-        # Handle merges
-        # new_board, new_delta_captures = self._resolve_board(new_board, selected_col)
-
-        cpp_core.resolve_board_inplace(new_board, selected_col, self.MAX_VALID_VALUE)
-
-        # delta_captures.extend(new_delta_captures)
-
-        return new_board, self.StepResult.SUCCESS, delta_captures
+            delta_captures.append((new_board.copy(), []))
+            return new_board, self.StepResult.SUCCESS, delta_captures
     
     def _step(self, action: int):
         new_board, result, delta_captures = self._apply_step_no_mutate(action, self.board, self.current_tile)
