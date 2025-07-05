@@ -31,11 +31,12 @@ from stable_baselines3 import PPO
 from stable_baselines3.common.callbacks import BaseCallback
 from stable_baselines3.common.env_util import make_vec_env
 from stable_baselines3.common.torch_layers import BaseFeaturesExtractor
-from stable_baselines3.common.vec_env import VecMonitor
+from stable_baselines3.common.vec_env import VecMonitor, SubprocVecEnv
 from stable_baselines3.common.callbacks import CheckpointCallback, CallbackList
 
 # Import the game environment
 from components.simulator import DropMergeEnv
+from components.strategy import pad_observation
 
 ###############################################################################
 # Observation pre‑processing wrapper                                          #
@@ -58,8 +59,15 @@ class BoolToFloat32(gym.ObservationWrapper):
             )
             for k, space in env.observation_space.items()
         })
+        self.observation_space['board'] = gym.spaces.Box(
+            low=0.0,
+            high=1.0,
+            shape=(7, 5, self.observation_space['board'].shape[2]),
+            dtype=np.float32,
+        )
 
     def observation(self, obs):  # type: ignore[override]
+        obs = pad_observation(obs, self.observation_space['board'].shape)
         return {
             "board": obs["board"].astype(np.float32),
             "current_tile": obs["current_tile"].astype(np.float32),
@@ -78,17 +86,17 @@ class DropMergeFeatureExtractor(BaseFeaturesExtractor):
         super().__init__(observation_space, features_dim=1)  # temp
 
         # ── Board branch ────────────────────────────────────────────────────
-        board_shape = observation_space["board"].shape  # (7, 5, 10)
+        board_shape = observation_space["board"].shape
         channels_last = board_shape[2]
         self.board_net = nn.Sequential(
-            nn.Conv2d(channels_last, 32, kernel_size=3, padding=1),
-            nn.ReLU(),
-            nn.Conv2d(32, 64, kernel_size=3, padding=1),
+            nn.Conv2d(channels_last, 64, kernel_size=3, padding=1),
             nn.ReLU(),
             nn.Conv2d(64, 64, kernel_size=3, padding=1),
             nn.ReLU(),
-            nn.AdaptiveAvgPool2d(1),  # -> (B, 64, 1, 1)
-            nn.Flatten(),  # -> (B, 64)
+            nn.Conv2d(64, 64, kernel_size=3, padding=1),
+            nn.ReLU(),
+            nn.AdaptiveAvgPool2d(1),
+            nn.Flatten(),
         )
 
         # ── Tile branch ─────────────────────────────────────────────────────
@@ -106,6 +114,7 @@ class DropMergeFeatureExtractor(BaseFeaturesExtractor):
     def forward(self, obs):  # type: ignore[override]
         # `obs` is a Dict with keys as tensors
         board = obs["board"].permute(0, 3, 1, 2)  # (B, C, H, W)
+
         board_feat = self.board_net(board)
 
         tiles = torch.cat([obs["current_tile"], obs["next_tile"]], dim=1)
@@ -148,7 +157,7 @@ def make_single_env(seed: int | None = None) -> Callable[[], gym.Env]:
     """Returns a thunk that creates one wrapped environment."""
 
     def _init() -> gym.Env:
-        env = DropMergeEnv(seed=seed)
+        env = DropMergeEnv(num_rows=7, num_cols=5, seed=seed)
         env = BoolToFloat32(env)
         return env
 
@@ -199,7 +208,7 @@ def main() -> None:  # noqa: D401
     env = make_vec_env(
         make_single_env(),
         n_envs=args.n_envs,
-        vec_env_cls=None,  # defaults to Subproc if >1 env
+        vec_env_cls=SubprocVecEnv,
     )
     env = VecMonitor(env, filename=args.log_dir)
 
@@ -207,24 +216,27 @@ def main() -> None:  # noqa: D401
         features_extractor_class=DropMergeFeatureExtractor,
     )
 
-    model = PPO(
-        "MultiInputPolicy",
-        env,
-        policy_kwargs=policy_kwargs,
-        n_steps=1024,
-        batch_size=1024,
-        n_epochs=1,
-        learning_rate=warmup_then_decay(1e-5, 5e-4, 0.03, 1e-5),
-        gamma=0.99,
-        gae_lambda=0.95,
-        clip_range=0.2,
-        ent_coef=0.01,
-        vf_coef=0.5,
-        max_grad_norm=0.5,
-        device="cuda" if torch.cuda.is_available() else "cpu",
-        verbose=1,
-        tensorboard_log=args.log_dir,
-    )
+    model = PPO.load("model_checkpoints/rl_model_2889600000_steps.zip", tensorboard_log=args.log_dir, device="cuda" if torch.cuda.is_available() else "cpu")
+    model.set_env(env)
+
+    # model = PPO(
+    #     "MultiInputPolicy",
+    #     env,
+    #     policy_kwargs=policy_kwargs,
+    #     n_steps=1024,
+    #     batch_size=1024,
+    #     n_epochs=1,
+    #     learning_rate=warmup_then_decay(1e-5, 5e-4, 0.0, 1e-5),
+    #     gamma=0.99,
+    #     gae_lambda=0.95,
+    #     clip_range=0.2,
+    #     ent_coef=0.01,
+    #     vf_coef=0.5,
+    #     max_grad_norm=0.5,
+    #     device="cuda" if torch.cuda.is_available() else "cpu",
+    #     verbose=1,
+    #     tensorboard_log=args.log_dir,
+    # )
 
     callback = EpLenRewardCallback()
 
@@ -233,7 +245,7 @@ def main() -> None:  # noqa: D401
 
     callback = CallbackList([checkpoint_callback, callback])
 
-    model.learn(total_timesteps=args.total_timesteps, callback=callback)
+    model.learn(total_timesteps=args.total_timesteps, callback=callback, reset_num_timesteps=False)
 
     # Persist the trained network parameters
     os.makedirs(os.path.dirname(args.save_path), exist_ok=True)
